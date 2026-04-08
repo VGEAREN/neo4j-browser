@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Book Graph</title>
+<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0a0a0f; color: #e0e0e0; }
+
+  .header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; background: #12121a; border-bottom: 1px solid #2a2a3a; }
+  .header h1 { font-size: 18px; font-weight: 600; color: #a0a0ff; }
+  .book-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+  .book-tab {
+    padding: 6px 16px; border-radius: 20px; border: 1px solid #3a3a5a; background: transparent;
+    color: #a0a0b0; cursor: pointer; font-size: 13px; transition: all 0.2s;
+  }
+  .book-tab:hover { border-color: #6a6aff; color: #c0c0ff; }
+  .book-tab.active { background: #2a2a6a; border-color: #6a6aff; color: #fff; }
+
+  .main { display: flex; height: calc(100vh - 60px); }
+  #graph-container { flex: 1; background: #0a0a0f; }
+
+  .panel {
+    width: 320px; background: #12121a; border-left: 1px solid #2a2a3a; padding: 20px;
+    overflow-y: auto; transition: transform 0.3s;
+  }
+  .panel.hidden { transform: translateX(320px); width: 0; padding: 0; overflow: hidden; }
+  .panel h2 { font-size: 20px; color: #a0a0ff; margin-bottom: 4px; }
+  .panel .role { font-size: 12px; color: #6a6a8a; margin-bottom: 8px; }
+  .panel .faction { display: inline-block; padding: 2px 10px; border-radius: 10px; background: #2a2a4a; color: #8a8aff; font-size: 12px; margin-bottom: 12px; }
+  .panel .desc { font-size: 14px; color: #b0b0c0; line-height: 1.6; margin-bottom: 16px; }
+  .panel h3 { font-size: 14px; color: #8080a0; margin-bottom: 8px; }
+  .rel-item {
+    padding: 8px 12px; margin-bottom: 6px; border-radius: 8px; background: #1a1a2a;
+    border-left: 3px solid #4a4a8a; cursor: pointer; transition: background 0.2s;
+  }
+  .rel-item:hover { background: #22224a; }
+  .rel-item .rel-type { font-size: 13px; font-weight: 600; color: #a0a0ff; }
+  .rel-item .rel-other { font-size: 12px; color: #8a8a9a; }
+  .rel-item .rel-detail { font-size: 12px; color: #6a6a7a; margin-top: 2px; }
+  .rel-item .arrow { color: #4a4a8a; font-size: 11px; }
+
+  .legend { position: fixed; bottom: 16px; left: 16px; display: flex; gap: 12px; }
+  .legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; color: #6a6a8a; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  .stats { position: fixed; bottom: 16px; right: 340px; font-size: 11px; color: #4a4a6a; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Book Graph</h1>
+  <div class="book-tabs" id="book-tabs"></div>
+</div>
+
+<div class="main">
+  <div id="graph-container"></div>
+  <div class="panel hidden" id="panel">
+    <h2 id="char-name"></h2>
+    <div class="role" id="char-role"></div>
+    <span class="faction" id="char-faction"></span>
+    <div class="desc" id="char-desc"></div>
+    <h3>Relations</h3>
+    <div id="char-rels"></div>
+  </div>
+</div>
+
+<div class="legend" id="legend"></div>
+<div class="stats" id="stats"></div>
+
+<script>
+const FACTION_COLORS = {
+  '韦斯特弗家族': '#e06060',
+  '学术界': '#60a0e0',
+  '外部世界': '#60c060',
+  '祖父母': '#c08040',
+  '红岸基地': '#e08040',
+  'ETO': '#e04040',
+  'ETO/降临派': '#c03030',
+  '人类': '#4090e0',
+  '人类/面壁者': '#40b0e0',
+  '人类/执剑人': '#30c0f0',
+  '人类/军方': '#5080b0',
+  '人类/失败主义者': '#806090',
+  '人类/激进派': '#c06040',
+  '人类/三体潜伏者': '#a060c0',
+  '科学边界': '#a04060',
+  '破壁人': '#c04080',
+  '永恒时空': '#4080c0',
+  '隐藏世纪': '#c060a0',
+  '歙县/军户': '#c0a040',
+  '歙县': '#a0a040',
+  '应天巡按': '#6080a0',
+};
+
+function getColor(faction) {
+  return FACTION_COLORS[faction] || '#6a6aaa';
+}
+
+let network = null;
+let currentBook = null;
+
+async function loadBooks() {
+  const res = await fetch('/api/books');
+  const books = await res.json();
+  const tabs = document.getElementById('book-tabs');
+
+  // Add "全部" and "三体全集"
+  const allTab = document.createElement('button');
+  allTab.className = 'book-tab';
+  allTab.textContent = '全部';
+  allTab.onclick = () => selectBook('全部', allTab);
+  tabs.appendChild(allTab);
+
+  // Check if there are 三体 books
+  const santiBooks = books.filter(b => b.book && b.book.startsWith('三体'));
+  if (santiBooks.length > 1) {
+    const santiTab = document.createElement('button');
+    santiTab.className = 'book-tab';
+    santiTab.textContent = '三体全集';
+    santiTab.onclick = () => selectBook('三体全集', santiTab);
+    tabs.appendChild(santiTab);
+  }
+
+  // Deduplicate and group 三体
+  const seen = new Set();
+  for (const b of books) {
+    if (!b.book) continue;
+    let displayName = b.book;
+    if (b.book.startsWith('三体')) continue; // skip individual 三体 books
+    if (seen.has(displayName)) continue;
+    seen.add(displayName);
+    const tab = document.createElement('button');
+    tab.className = 'book-tab';
+    tab.textContent = `${displayName} (${b.count})`;
+    tab.onclick = () => selectBook(b.book, tab);
+    tabs.appendChild(tab);
+  }
+}
+
+async function selectBook(book, tabEl) {
+  document.querySelectorAll('.book-tab').forEach(t => t.classList.remove('active'));
+  if (tabEl) tabEl.classList.add('active');
+  currentBook = book;
+
+  const res = await fetch(`/api/graph/${encodeURIComponent(book)}`);
+  const data = await res.json();
+  renderGraph(data);
+  document.getElementById('panel').classList.add('hidden');
+}
+
+function renderGraph(data) {
+  const container = document.getElementById('graph-container');
+
+  const factions = new Set();
+  const nodes = new vis.DataSet(data.nodes.map(n => {
+    factions.add(n.faction);
+    const color = getColor(n.faction);
+    const isCore = n.role && (n.role.includes('主角') || n.role.includes('核心'));
+    return {
+      id: n.id,
+      label: n.label,
+      color: { background: color, border: color, highlight: { background: '#fff', border: color } },
+      font: { color: '#e0e0e0', size: isCore ? 16 : 13 },
+      size: isCore ? 28 : 18,
+      shape: 'dot',
+      borderWidth: isCore ? 3 : 1,
+      shadow: { enabled: true, color: color + '40', size: 10 },
+      _data: n,
+    };
+  }));
+
+  const edges = new vis.DataSet(data.edges.map((e, i) => ({
+    id: i,
+    from: e.from,
+    to: e.to,
+    label: e.label,
+    font: { color: '#7a7a9a', size: 11, strokeWidth: 0, align: 'middle' },
+    color: { color: '#3a3a6a', highlight: '#8a8aff' },
+    arrows: { to: { enabled: true, scaleFactor: 0.6 } },
+    smooth: { type: 'curvedCW', roundness: 0.15 },
+    width: 1.5,
+    _data: e,
+  })));
+
+  const options = {
+    physics: {
+      solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -60, centralGravity: 0.008, springLength: 160, springConstant: 0.04 },
+      stabilization: { iterations: 150 },
+    },
+    interaction: { hover: true, tooltipDelay: 200, zoomView: true, dragView: true },
+    layout: { improvedLayout: true },
+  };
+
+  if (network) network.destroy();
+  network = new vis.Network(container, { nodes, edges }, options);
+
+  network.on('click', async (params) => {
+    if (params.nodes.length > 0) {
+      const nodeId = params.nodes[0];
+      await showCharacter(nodeId);
+    }
+  });
+
+  // Legend
+  const legend = document.getElementById('legend');
+  legend.innerHTML = '';
+  for (const f of factions) {
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `<div class="legend-dot" style="background:${getColor(f)}"></div>${f}`;
+    legend.appendChild(item);
+  }
+
+  document.getElementById('stats').textContent = `${data.nodes.length} characters / ${data.edges.length} relations`;
+}
+
+async function showCharacter(name) {
+  const res = await fetch(`/api/character/${encodeURIComponent(name)}`);
+  const char = await res.json();
+  if (char.error) return;
+
+  const panel = document.getElementById('panel');
+  panel.classList.remove('hidden');
+
+  document.getElementById('char-name').textContent = char.name;
+  document.getElementById('char-role').textContent = `${char.role} / ${char.book}`;
+  document.getElementById('char-faction').textContent = char.faction;
+  document.getElementById('char-desc').textContent = char.description;
+
+  const relsDiv = document.getElementById('char-rels');
+  relsDiv.innerHTML = '';
+  for (const r of char.relations) {
+    const item = document.createElement('div');
+    item.className = 'rel-item';
+    const arrow = r.direction === 'out' ? '→' : '←';
+    item.innerHTML = `
+      <div class="rel-type">${r.type}</div>
+      <div class="rel-other"><span class="arrow">${arrow}</span> ${r.other}</div>
+      <div class="rel-detail">${r.detail}</div>
+    `;
+    item.onclick = async () => {
+      await showCharacter(r.other);
+      network.selectNodes([r.other]);
+    };
+    relsDiv.appendChild(item);
+  }
+}
+
+loadBooks();
+</script>
+</body>
+</html>
