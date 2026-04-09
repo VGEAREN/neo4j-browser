@@ -72,32 +72,36 @@
 <div class="stats" id="stats"></div>
 
 <script>
-const FACTION_COLORS = {
-  '韦斯特弗家族': '#e06060',
-  '学术界': '#60a0e0',
-  '外部世界': '#60c060',
-  '祖父母': '#c08040',
-  '红岸基地': '#e08040',
-  'ETO': '#e04040',
-  'ETO/降临派': '#c03030',
-  '人类': '#4090e0',
-  '人类/面壁者': '#40b0e0',
-  '人类/执剑人': '#30c0f0',
-  '人类/军方': '#5080b0',
-  '人类/失败主义者': '#806090',
-  '人类/激进派': '#c06040',
-  '人类/三体潜伏者': '#a060c0',
-  '科学边界': '#a04060',
-  '破壁人': '#c04080',
-  '永恒时空': '#4080c0',
-  '隐藏世纪': '#c060a0',
-  '歙县/军户': '#c0a040',
-  '歙县': '#a0a040',
-  '应天巡按': '#6080a0',
-};
+// Auto-generate distinct colors for any faction via HSL hashing
+const FACTION_COLOR_CACHE = {};
+const FACTION_PALETTE = [
+  '#e06060', '#60a0e0', '#60c060', '#c08040', '#e08040',
+  '#a060c0', '#40b0b0', '#c06080', '#80a040', '#d09040',
+  '#6080c0', '#c04040', '#4090e0', '#a0a040', '#e060a0',
+  '#50b080', '#8070d0', '#d07050', '#40c0a0', '#b08060',
+];
+
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+}
 
 function getColor(faction) {
-  return FACTION_COLORS[faction] || '#6a6aaa';
+  if (!faction) return '#6a6aaa';
+  if (FACTION_COLOR_CACHE[faction]) return FACTION_COLOR_CACHE[faction];
+  const idx = hashStr(faction) % FACTION_PALETTE.length;
+  // If collision, shift hue slightly
+  let color = FACTION_PALETTE[idx];
+  const used = new Set(Object.values(FACTION_COLOR_CACHE));
+  if (used.has(color)) {
+    const hue = (hashStr(faction) * 137) % 360;
+    color = `hsl(${hue}, 60%, 55%)`;
+  }
+  FACTION_COLOR_CACHE[faction] = color;
+  return color;
 }
 
 let network = null;
